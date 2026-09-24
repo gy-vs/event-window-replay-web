@@ -1,0 +1,1 @@
+const target = document.querySelector('#windows'); fetch('/api/windows').then(response => response.json()).then(data => { target.textContent = data.windows.map(item => item.window + ': ' + item.events.length).join(', ') || 'No windows'; });
