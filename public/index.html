@@ -1,1 +1,104 @@
-<!doctype html><html><body><main><h1>Event window replay</h1><p id="windows">Loading windows</p></main><script type="module" src="/app.js"></script></body></html>
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>事件窗口回放</title>
+<style>
+  :root { font-family: system-ui, sans-serif; color: #1f2430; }
+  body { margin: 0; background: #f4f5f8; }
+  main { max-width: 1080px; margin: 0 auto; padding: 16px 20px 60px; }
+  h1 { font-size: 18px; margin: 4px 0 12px; }
+  .bar { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; background: #fff; border: 1px solid #e2e5ee; border-radius: 8px; padding: 10px 12px; margin-bottom: 12px; }
+  .badge { font-size: 12px; padding: 2px 8px; border-radius: 999px; font-weight: 600; }
+  .badge.live { background: #e3f6e9; color: #147a3d; }
+  .badge.replay { background: #e8edff; color: #2a44c7; }
+  .badge.stale { background: #fff1e0; color: #b45a06; }
+  .badge.invalid { background: #fde7e9; color: #b42330; }
+  .tabs { display: flex; gap: 6px; flex-wrap: wrap; }
+  .tab, button { font: inherit; font-size: 13px; padding: 5px 12px; border: 1px solid #c7ccda; background: #fbfbfe; border-radius: 6px; cursor: pointer; }
+  .tab.active { background: #2a44c7; border-color: #2a44c7; color: #fff; }
+  button.primary { background: #2a44c7; color: #fff; border-color: #2a44c7; }
+  button:disabled { opacity: .5; cursor: default; }
+  .panel { background: #fff; border: 1px solid #e2e5ee; border-radius: 8px; padding: 12px 14px; margin-bottom: 14px; }
+  .panel h2 { font-size: 14px; margin: 0 0 8px; display: flex; gap: 8px; align-items: center; }
+  .muted { color: #6b7280; font-size: 12px; }
+  input[type=range] { width: 100%; }
+  .ticks { display: flex; gap: 4px; flex-wrap: wrap; margin-top: 4px; }
+  .tick { font-size: 11px; padding: 1px 7px; border-radius: 4px; border: 1px solid #d6dae6; background: #fafbff; }
+  .tick.commit { border-color: #2f9e5f; color: #147a3d; font-weight: 700; }
+  .tick.superseded { border-color: #d98a2b; color: #b45a06; text-decoration: line-through; }
+  .tick.late::after { content: ' 迟'; color: #b45a06; }
+  .tick.current { background: #2a44c7; color: #fff; border-color: #2a44c7; }
+  .group { margin-top: 8px; border: 1px solid #ecedf3; border-radius: 6px; }
+  .group > summary { cursor: pointer; padding: 6px 10px; font-size: 12px; font-weight: 600; user-select: none; }
+  .group.confirmed summary { color: #147a3d; }
+  .group.waiting summary { color: #92610a; }
+  .group.later summary { color: #b42330; }
+  .events { padding: 4px 10px 8px; display: flex; flex-direction: column; gap: 4px; max-height: 260px; overflow: auto; }
+  .row { display: flex; gap: 10px; align-items: baseline; font-size: 12.5px; padding: 2px 6px; border-radius: 4px; cursor: pointer; }
+  .row:hover { background: #f2f4fb; }
+  .row.selected { background: #e3e9ff; outline: 1px solid #b9c6ff; }
+  .row.flash { animation: flash 1.4s ease; }
+  @keyframes flash { 0% { background: #fff0b8; } 100% { background: transparent; } }
+  .row .id { font-family: ui-monospace, monospace; font-weight: 600; }
+  .tag { font-size: 10px; padding: 0 6px; border-radius: 999px; }
+  .tag.late { background: #fde6d3; color: #b45a06; }
+  .tag.recalc { background: #fde6d3; color: #b45a06; }
+  .tag.ok { background: #e3f6e9; color: #147a3d; }
+  form.append { display: flex; gap: 6px; flex-wrap: wrap; }
+  form.append input { font: inherit; font-size: 12.5px; padding: 4px 8px; border: 1px solid #c7ccda; border-radius: 6px; width: 96px; }
+  .banner { font-size: 12.5px; padding: 8px 10px; border-radius: 6px; margin-bottom: 8px; }
+  .banner.stale { background: #fff4e3; border: 1px solid #f0c389; color: #8a4a05; }
+  .banner.invalid { background: #fde7e9; border: 1px solid #f0b8be; color: #991c28; }
+  .banner.info { background: #eef2ff; border: 1px solid #c6d0ff; color: #2a44c7; }
+  select { font: inherit; font-size: 12.5px; padding: 4px 6px; border: 1px solid #c7ccda; border-radius: 6px; }
+  label.check { font-size: 12px; color: #4b5563; }
+</style>
+</head>
+<body>
+<main>
+  <h1>事件窗口回放 <span id="mode" class="badge live">实时</span></h1>
+
+  <div class="bar">
+    <div class="tabs" id="tabs"></div>
+    <span class="muted" id="window-status"></span>
+    <span style="flex:1"></span>
+    <button id="commit" title="把当前窗口的最新计算版本标记为提交">提交窗口</button>
+    <button id="save-cursor">保存游标</button>
+    <select id="cursor-list" title="恢复已保存的游标"><option value="">恢复游标…</option></select>
+    <button id="back-live">回到实时</button>
+  </div>
+
+  <section class="panel" id="timeline-panel">
+    <h2>版本时间线 <span class="muted" id="timeline-hint"></span></h2>
+    <input type="range" id="timeline" min="0" max="0" value="0" disabled>
+    <div class="ticks" id="ticks"></div>
+  </section>
+
+  <section class="panel" id="replay-panel" hidden>
+    <h2>回放视图 <span id="replay-pos" class="muted"></span></h2>
+    <div id="replay-banner"></div>
+    <div id="replay-groups"></div>
+  </section>
+
+  <section class="panel" id="live-panel">
+    <h2>实时视图 <span class="muted" id="live-hint"></span></h2>
+    <div id="live-windows"></div>
+  </section>
+
+  <section class="panel">
+    <h2>写入事件</h2>
+    <form class="append" id="append-form">
+      <input name="id" placeholder="id（留空自动）">
+      <input name="window" placeholder="窗口" required>
+      <input name="eventTime" type="number" placeholder="事件时间" required>
+      <input name="value" type="number" step="any" placeholder="数值">
+      <button class="primary" type="submit">写入</button>
+      <span class="muted">回放期间也可写入：新事件进入实时视图与“后来才到达”，不会覆盖历史。</span>
+    </form>
+  </section>
+</main>
+<script type="module" src="/app.js"></script>
+</body>
+</html>
