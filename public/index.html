@@ -1,1 +1,100 @@
-<!doctype html><html><body><main><h1>Event window replay</h1><p id="windows">Loading windows</p></main><script type="module" src="/app.js"></script></body></html>
+<!doctype html>
+<html lang="zh">
+<head>
+<meta charset="utf-">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Event window replay</title>
+<style>
+  :root { color-scheme: light; }
+  * { box-sizing: border-box; }
+  body { margin: 0; font: 14px/1.5 system-ui, sans-serif; background: #f5f6f8; color: #1f2430; }
+  header { padding: 12px 20px; background: #1f2430; color: #fff; display: flex; align-items: center; gap: 16px; flex-wrap: wrap; }
+  header h1 { font-size: 16px; margin: 0; }
+  #mode-badge { padding: 2px 10px; border-radius: 999px; font-size: 12px; font-weight: 600; }
+  .live #mode-badge { background: #1f9d55; }
+  .replay #mode-badge { background: #c05621; }
+  header .seq { font-variant-numeric: tabular-nums; opacity: .8; font-size: 12px; }
+  header button { margin-left: auto; }
+  main { padding: 16px 20px; display: grid; grid-template-columns: minmax(320px, 1fr) minmax(360px, 1.4fr); gap: 16px; align-items: start; }
+  @media (max-width: 900px) { main { grid-template-columns: 1fr; } }
+  .card { background: #fff; border: 1px solid #e2e5ea; border-radius: 8px; padding: 14px 16px; }
+  .card h2 { margin: 0 0 10px; font-size: 13px; text-transform: uppercase; letter-spacing: .06em; color: #5a6475; }
+  .window { border: 1px solid #e2e5ea; border-radius: 6px; margin-bottom: 8px; overflow: hidden; }
+  .window > summary, .window-head { display: flex; align-items: center; gap: 8px; padding: 8px 12px; cursor: pointer; background: #fafbfc; user-select: none; }
+  .window-head { cursor: default; }
+  .window-name { font-weight: 600; }
+  .tag { font-size: 11px; padding: 1px 7px; border-radius: 999px; border: 1px solid transparent; }
+  .tag.open { background: #ebf4ff; color: #2b6cb0; border-color: #bee3f8; }
+  .tag.closed { background: #f0fff4; color: #276749; border-color: #c6f6d5; }
+  .tag.v { background: #faf5ff; color: #6b46c1; border-color: #e9d8fd; }
+  .tag.late { background: #fffaf0; color: #c05621; border-color: #feebc8; }
+  .tag.stale { background: #fff5f5; color: #c53030; border-color: #fed7d7; }
+  .spacer { flex: 1; }
+  .events { list-style: none; margin: 0; padding: 4px 0; }
+  .event-row { padding: 4px 12px 4px 24px; cursor: pointer; font-variant-numeric: tabular-nums; }
+  .event-row:hover { background: #f0f4ff; }
+  .event-row.selected { background: #dbe6ff; outline: 2px solid #6b9bff; outline-offset: -2px; }
+  .event-row.later { opacity: .45; }
+  .event-row.waiting { background: #fffdf0; }
+  .group-label { padding: 6px 12px 2px; font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: .05em; color: #8a93a5; }
+  .scrubber { margin: 8px 0 4px; }
+  .scrubber input[type=range] { width: 100%; }
+  .ticks { display: flex; gap: 0; font-size: 10px; margin-top: 2px; position: relative; height: 26px; }
+  .tick { position: absolute; transform: translateX(-50%); text-align: center; color: #718096; cursor: pointer; white-space: nowrap; }
+  .tick.event { top: 0; }
+  .tick.commit, .tick.recompute { top: 12px; font-weight: 700; }
+  .tick.recompute { color: #c05621; }
+  .tick.flagged { color: #c53030; font-weight: 700; }
+  select, button, input[type=text] { font: inherit; padding: 4px 8px; border: 1px solid #cbd2dc; border-radius: 5px; background: #fff; }
+  button { cursor: pointer; }
+  button.primary { background: #3182ce; color: #fff; border-color: #2b6cb0; }
+  button:disabled { opacity: .5; cursor: not-allowed; }
+  .row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin-bottom: 10px; }
+  .cursor-item { border: 1px solid #e2e5ea; border-radius: 6px; padding: 8px 10px; margin-bottom: 6px; display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+  .cursor-item.stale { background: #fffafa; border-color: #fed7d7; }
+  .banner { padding: 8px 12px; border-radius: 6px; margin-bottom: 10px; font-size: 13px; }
+  .banner.warn { background: #fffaf0; border: 1px solid #feebc8; color: #9c4221; }
+  .banner.info { background: #ebf8ff; border: 1px solid #bee3f8; color: #2a4365; }
+  .muted { color: #8a93a5; font-size: 12px; }
+  .hidden { display: none; }
+  .new-events-note { font-size: 12px; color: #c05621; font-weight: 600; }
+</style>
+</head>
+<body class="live">
+<header>
+  <h1>Event window replay</h1>
+  <span id="mode-badge">实时</span>
+  <span class="seq" id="head-seq"></span>
+  <span class="new-events-note hidden" id="new-events-note"></span>
+  <button id="back-live" class="hidden">返回实时视图</button>
+</header>
+<main>
+  <section class="card" id="live-pane">
+    <h2>实时窗口（数据库当前状态）</h2>
+    <div id="live-windows"></div>
+  </section>
+
+  <section class="card" id="replay-pane">
+    <h2>版本回放时间线</h2>
+    <div class="row">
+      <label>窗口 <select id="window-select"></select></label>
+      <span id="anchor-info" class="muted"></span>
+    </div>
+    <div class="banner info hidden" id="replay-banner"></div>
+    <div class="banner warn hidden" id="stale-banner"></div>
+    <div class="scrubber">
+      <input type="range" id="scrub" min="0" max="0" step="1" value="0">
+      <div class="ticks" id="ticks"></div>
+    </div>
+    <div id="replay-view"></div>
+    <div class="row" style="margin-top:10px">
+      <input type="text" id="cursor-label" placeholder="游标名称（可选）" maxlength="60">
+      <button id="save-cursor" class="primary">保存当前位置为游标</button>
+    </div>
+    <h2 style="margin-top:14px">已保存游标（服务端持久化）</h2>
+    <div id="cursor-list"><span class="muted">暂无游标</span></div>
+  </section>
+</main>
+<script type="module" src="/app.js"></script>
+</body>
+</html>
